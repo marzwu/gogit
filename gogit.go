@@ -19,6 +19,7 @@ type blob struct {
 type tree struct {
 	b     []*blob
 	name  string
+	sha1  string
 	child []*tree
 }
 
@@ -28,49 +29,93 @@ type commit struct {
 	parent *commit
 }
 
-func (b *blob) checkout(prefix string) {
-	if content, err := readSha1FileContent(b.sha1);err!=nil{
+func (b *blob) checkout(prefix string, relate string) {
+	if content, err := readSha1FileContent(b.sha1); err != nil {
 		log.Fatal("blob checkout error:", err)
-	}else{
+	} else {
 		body := getSha1FileContentBody(content)
-		filename := prefix + "/" + b.filename
-		log.Println("WriteFile:",filename)
-		if err = ioutil.WriteFile(filename, body, 0644);err!=nil{
+		filename := prefix + "/tree/" + relate + "/" + b.filename
+		log.Println("WriteFile:", filename)
+		if err = ioutil.WriteFile(filename, body, 0644); err != nil {
 			log.Fatal("blob checkout error:", err)
 		}
 	}
 }
 
 func (t *tree) checkout(path string) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		log.Println("Mkdir:",path)
-		if err := os.Mkdir(path, 0777); err != nil {
+	fpath := path + "/tree/" + t.sha1
+	if _, err := os.Stat(fpath); os.IsNotExist(err) {
+		log.Println("Mkdir:", path)
+		log.Println("Mkdir:", t.sha1)
+		if err := os.Mkdir(fpath, 0777); err != nil {
 			log.Fatal("mkdir error:", err)
 			return
 		}
 	}
 	for _, v := range t.b {
-		v.checkout(path)	//BLOB checkout
+		v.checkout(path, t.sha1) //BLOB checkout
 	}
 	for _, v := range t.child {
-		v.checkout(path + "/" + v.name)		//TREE checkout
+		v.checkout(path) //TREE checkout
 	}
 }
 
 func (c *commit) CheckOut() {
 	fmt.Println(c.tree)
-	if pwd, err := os.Getwd();err==nil{
+	if pwd, err := os.Getwd(); err == nil {
 		c.tree.checkout(pwd)
-	}else{
+	} else {
 		log.Fatal("commit checkout error:", err)
 	}
+}
+
+func BuildTree(sha1 string) *tree {
+	all, err := readSha1FileContent(sha1)
+	if err != nil {
+		log.Fatal("BuildTree error:", err)
+		return nil
+	}
+
+	content := getSha1FileContentBody(all)
+	start := 0
+	tree := tree{}
+	for i := 0; i < len(content); {
+		if content[i] == 0 {
+			log.Println("tree: ", string(content[start:i]))
+			line := content[start : i+21]
+			_type := line[:6]
+			id := line[i-start+1:]
+			obj_sha1 := fmt.Sprintf("%x", id)
+			switch string(_type[0:3]) {
+			//BLOB
+			case "100":
+				name := string(line[7 : i-start])
+				b := blob{sha1: obj_sha1, filename: name}
+				tree.b = append(tree.b, &b)
+				break
+			//TREE
+			case "400":
+				name := string(line[6 : i-start])
+				child := BuildTree(obj_sha1)
+				child.name = name
+				child.sha1 = obj_sha1
+				tree.child = append(tree.child, child)
+				break
+			}
+			i += 21
+			start = i
+		} else {
+			i++
+		}
+	}
+	return &tree
 }
 
 func BuildCommit(sha1 string) (cmt *commit, hasParent bool) {
 	cmt = new(commit)
 	content, err := readSha1FileContent(sha1)
 	if err != nil {
-		log.Fatal("BuildCommit error:",err)
+		log.Fatal("BuildCommit error:", err)
 		return
 	}
 	cmt.sha1 = sha1
@@ -78,6 +123,7 @@ func BuildCommit(sha1 string) (cmt *commit, hasParent bool) {
 	for i := 0; i < len(content); i++ {
 		v := content[i]
 		if v == '\n' {
+			log.Println("commit: ", string(content[start:i]))
 			line := string(content[start:i])
 			fields := strings.Split(line, " ")
 			switch fields[0] {
@@ -100,50 +146,10 @@ func BuildCommit(sha1 string) (cmt *commit, hasParent bool) {
 	return
 }
 
-func BuildTree(sha1 string) *tree {
-	all, err := readSha1FileContent(sha1)
-	if err != nil {
-		log.Fatal("BuildTree error:", err)
-		return nil
-	}
-
-	content := getSha1FileContentBody(all)
-	start := 0
-	tree := tree{}
-	for i := 0; i < len(content); {
-		if content[i] == 0 {
-			line := content[start : i+21]
-			_type := line[:6]
-			id := line[i-start+1:]
-			obj_sha1 := fmt.Sprintf("%x", id)
-			switch string(_type[0:3]) {
-			//BLOB
-			case "100":
-				name := string(line[7 : i-start])
-				b := blob{sha1: obj_sha1, filename: name}
-				tree.b = append(tree.b, &b)
-				break
-			//TREE
-			case "400":
-				name := string(line[6 : i-start])
-				child := BuildTree(obj_sha1)
-				child.name = name
-				tree.child = append(tree.child, child)
-				break
-			}
-			i += 21
-			start = i
-		} else {
-			i++
-		}
-	}
-	return &tree
-}
-
 func readSha1FileReader(sha1 string) (reader io.Reader, err error) {
 
 	f, err := os.Open(getSha1FilePath(sha1))
-	if err != nil{
+	if err != nil {
 		return
 	}
 	return zlib.NewReader(f)
@@ -151,7 +157,7 @@ func readSha1FileReader(sha1 string) (reader io.Reader, err error) {
 
 func readSha1FileContent(sha1 string) (content []byte, err error) {
 
-	if reader, err := readSha1FileReader(sha1);err == nil{
+	if reader, err := readSha1FileReader(sha1); err == nil {
 		buf := new(bytes.Buffer)
 		buf.ReadFrom(reader)
 		content = buf.Bytes()
@@ -174,9 +180,9 @@ func main() {
 		log.Println(err)
 	}
 	commitTree, _ := BuildCommit(string(master[0 : len(master)-1]))
-	if commitTree.tree != nil{
+	if commitTree.tree != nil {
 		commitTree.CheckOut()
-	}else{
+	} else {
 		log.Fatal("tree is empty")
 	}
 }
