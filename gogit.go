@@ -58,6 +58,7 @@ func (t *tree) checkout(path string) {
 }
 
 func (c *commit) CheckOut() {
+	fmt.Println(c.tree)
 	if pwd, err := os.Getwd();err==nil{
 		c.tree.checkout(pwd)
 	}else{
@@ -173,5 +174,9 @@ func main() {
 		log.Println(err)
 	}
 	commitTree, _ := BuildCommit(string(master[0 : len(master)-1]))
+	if commitTree.tree != nil{
 	commitTree.CheckOut()
+	}else{
+		log.Fatal("tree is empty")
+	}
 }
