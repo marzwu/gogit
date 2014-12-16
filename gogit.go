@@ -175,7 +175,7 @@ func main() {
 	}
 	commitTree, _ := BuildCommit(string(master[0 : len(master)-1]))
 	if commitTree.tree != nil{
-	commitTree.CheckOut()
+		commitTree.CheckOut()
 	}else{
 		log.Fatal("tree is empty")
 	}
